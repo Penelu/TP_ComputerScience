@@ -1,7 +1,6 @@
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
 #include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
 #include <sys/wait.h>
 
 #define BUFFER_SIZE 1024
