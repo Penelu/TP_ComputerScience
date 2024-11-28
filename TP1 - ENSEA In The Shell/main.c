@@ -1,16 +1,17 @@
-#include <unistd.h>
+#include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/wait.h>
 
 #define BUFFER_SIZE 1024
 
-int main() {
-    // Welcome message
+int main (int argc, char *argv[]){
     const char *welcome_msg = "Welcome to ENSEA Tiny Shell.\nType 'exit' to quit.\n";
     write(STDOUT_FILENO, welcome_msg, strlen(welcome_msg));
 
-    // REPL loop
+// REPL loop
     while (1) {
         // Print the shell prompt
         const char *prompt = "enseash % ";
@@ -20,9 +21,23 @@ int main() {
         char command[BUFFER_SIZE];
         ssize_t bytes_read = read(STDIN_FILENO, command, BUFFER_SIZE - 1);
 
+        // If Ctrl+D is pressed or read error, break
+        if (bytes_read <= 0) {
+            const char *goodbye_msg = "\nBye bye...\n";
+            write(STDOUT_FILENO, goodbye_msg, strlen(goodbye_msg));
+            break;
+        }
+
         // Null-terminating the input string and removing trailing newline
         command[bytes_read] = '\0';
         command[strcspn(command, "\n")] = '\0';
+
+        // If user types 'exit', break
+        if (strcmp(command, "exit") == 0) {
+            const char *goodbye_msg = "Bye bye...\n";
+            write(STDOUT_FILENO, goodbye_msg, strlen(goodbye_msg));
+            break;
+        }
 
         // Ignore empty lines
         if (strlen(command) == 0) {
