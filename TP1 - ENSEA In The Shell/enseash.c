@@ -4,10 +4,18 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <time.h>
 
 #define BUFFER_SIZE 1024
 
-int main (int argc, char *argv[]) {
+// Function to calculate elapsed time in milliseconds
+long calculate_elapsed_time(struct timespec start, struct timespec end) {
+    long seconds = end.tv_sec - start.tv_sec;
+    long nanoseconds = end.tv_nsec - start.tv_nsec;
+    return seconds * 1000 + nanoseconds / 1000000;  // Convert to milliseconds
+}
+
+int main(int argc, char *argv[]) {
     const char *welcome_msg = "Welcome to ENSEA Tiny Shell.\nType 'exit' to quit.\n";
     write(STDOUT_FILENO, welcome_msg, strlen(welcome_msg));
 
@@ -16,16 +24,16 @@ int main (int argc, char *argv[]) {
 
     // REPL loop
     while (1) {
-        // Print the shell prompt with the last status
+        // Construct the prompt dynamically
         char prompt[BUFFER_SIZE];
-        int prompt_length = snprintf(prompt, BUFFER_SIZE, "enseash %s%% ", prompt_status);
-        write(STDOUT_FILENO, prompt, prompt_length);
+        snprintf(prompt, BUFFER_SIZE, "enseash %s%% ", prompt_status);
+        write(STDOUT_FILENO, prompt, strlen(prompt));
 
-        // Adds buffer and reads input
+        // Buffer to store user input
         char command[BUFFER_SIZE];
         ssize_t bytes_read = read(STDIN_FILENO, command, BUFFER_SIZE - 1);
 
-        // If Ctrl+D is pressed or read error, break
+        // Handle Ctrl+D (EOF) or read error
         if (bytes_read <= 0) {
             const char *goodbye_msg = "\nBye bye...\n";
             write(STDOUT_FILENO, goodbye_msg, strlen(goodbye_msg));
@@ -48,6 +56,10 @@ int main (int argc, char *argv[]) {
             continue;
         }
 
+        // Measure execution time using clock_gettime
+        struct timespec start_time, end_time;
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+
         // Execute the command with a child fork
         pid_t pid = fork();
         if (pid < 0) {
@@ -66,18 +78,24 @@ int main (int argc, char *argv[]) {
             int status;
             waitpid(pid, &status, 0);
 
+            // Measure the end time
+            clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+            // Calculate elapsed time
+            long elapsed_time = calculate_elapsed_time(start_time, end_time);
+
             // Determine the status of the command
             if (WIFEXITED(status)) {
                 // If the command exited normally, get the exit code
                 int exit_code = WEXITSTATUS(status);
-                snprintf(prompt_status, BUFFER_SIZE, "[exit:%d] ", exit_code);
+                snprintf(prompt_status, BUFFER_SIZE, "[exit:%d|%ldms] ", exit_code, elapsed_time);
             } else if (WIFSIGNALED(status)) {
                 // If the command was terminated by a signal, get the signal number
                 int signal_number = WTERMSIG(status);
-                snprintf(prompt_status, BUFFER_SIZE, "[sign:%d] ", signal_number);
+                snprintf(prompt_status, BUFFER_SIZE, "[sign:%d|%ldms] ", signal_number, elapsed_time);
             } else {
                 // Unknown status
-                strncpy(prompt_status, "[unknown] ", BUFFER_SIZE);
+                snprintf(prompt_status, BUFFER_SIZE, "[unknown|%ldms] ", elapsed_time);
             }
         }
     }
