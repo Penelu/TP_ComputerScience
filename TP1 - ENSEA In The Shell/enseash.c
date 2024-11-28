@@ -15,6 +15,17 @@ long calculate_elapsed_time(struct timespec start, struct timespec end) {
     return seconds * 1000 + nanoseconds / 1000000;  // Convert to milliseconds
 }
 
+// Function to split a command into an array of arguments
+void parse_command(char *command, char *args[]) {
+    int i = 0;
+    char *token = strtok(command, " ");
+    while (token != NULL && i < BUFFER_SIZE / 2) {
+        args[i++] = token;
+        token = strtok(NULL, " ");
+    }
+    args[i] = NULL;  // Null-terminate the array
+}
+
 int main(int argc, char *argv[]) {
     const char *welcome_msg = "Welcome to ENSEA Tiny Shell.\nType 'exit' to quit.\n";
     write(STDOUT_FILENO, welcome_msg, strlen(welcome_msg));
@@ -60,6 +71,10 @@ int main(int argc, char *argv[]) {
         struct timespec start_time, end_time;
         clock_gettime(CLOCK_MONOTONIC, &start_time);
 
+        // Parse the command into arguments
+        char *args[BUFFER_SIZE / 2];
+        parse_command(command, args);
+
         // Execute the command with a child fork
         pid_t pid = fork();
         if (pid < 0) {
@@ -67,9 +82,9 @@ int main(int argc, char *argv[]) {
             write(STDOUT_FILENO, error_msg, strlen(error_msg));
             continue;
         } else if (pid == 0) {
-            // Child process: execute the command
-            execlp(command, command, NULL);
-            // If execlp fails, print an error message and exit
+            // Child process: execute the command with arguments
+            execvp(args[0], args);
+            // If execvp fails, print an error message and exit
             const char *exec_fail_msg = "Command execution failed\n";
             write(STDERR_FILENO, exec_fail_msg, strlen(exec_fail_msg));
             exit(EXIT_FAILURE);
