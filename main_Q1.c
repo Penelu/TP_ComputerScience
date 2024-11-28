@@ -2,34 +2,26 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
-int main (int argc, char *argv[]){
-    char* welcome = "Welcome to ENSEAshell!";
-    char* welcome2 = "Type 'exit' to quit.";
-    puts(welcome);
-    puts(welcome2);
+#define BUFFER_SIZE 1024
 
+int main() {
+    // Welcome message
+    const char *welcome_msg = "Welcome to ENSEA Tiny Shell.\nType 'exit' to quit.\n";
+    write(STDOUT_FILENO, welcome_msg, strlen(welcome_msg));
+
+    // REPL loop for prompt display
     while (1) {
         // Print the prompt
-        write(STDOUT_FILENO, "enseash % ", 10);
+        const char *prompt = "enseash % ";
+        write(STDOUT_FILENO, prompt, strlen(prompt));
 
         // Buffer to store user input
-        char command[1024];
-        if (fgets(command, sizeof(command), stdin) == NULL) {
-            // If user presses Ctrl+D, exit 
-            puts("\nBye bye...");
-            break;
-        }
-
-        // Remove trailing newline character from input
-        command[strcspn(command, "\n")] = 0;
-
-        // If user types 'exit', exit as well
-        if (strcmp(command, "exit") == 0) {
-            puts("Bye bye...");
-            break;
-        }
+        char command[BUFFER_SIZE];
+        ssize_t bytes_read = read(STDIN_FILENO, command, BUFFER_SIZE - 1);
 
     }
+
     return 0;
 }
