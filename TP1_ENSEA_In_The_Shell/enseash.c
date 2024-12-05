@@ -13,10 +13,12 @@
 #define GOODBYE_MSG "Bye bye...\n"
 #define DEFAULT_PROMPT ""
 
+// Calculate the elapsed time in milliseconds between two timespecs
 long calculate_elapsed_time(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
 }
 
+// Parse the input command, separating arguments and handling redirections (< and >)
 void parse_command(char *input, char *args[], char **input_file, char **output_file) {
     *input_file = NULL;
     *output_file = NULL;
@@ -38,6 +40,7 @@ void parse_command(char *input, char *args[], char **input_file, char **output_f
     args[i] = NULL;
 }
 
+// Handle input and output redirections for the child process
 void handle_redirections(char *input_file, char *output_file) {
     if (input_file) {
         int fd = open(input_file, O_RDONLY);
@@ -66,6 +69,7 @@ void handle_redirections(char *input_file, char *output_file) {
     }
 }
 
+// Fork and execute the command with arguments and any necessary redirections
 void execute_command(char *args[], char *input_file, char *output_file) {
     pid_t pid = fork();
     if (pid < 0) {
@@ -81,6 +85,7 @@ void execute_command(char *args[], char *input_file, char *output_file) {
     }
 }
 
+// Update the prompt status with the result of the last command (exit code or signal)
 void update_prompt_status(int status, long elapsed_time, char *prompt_status) {
     if (WIFEXITED(status)) {
         snprintf(prompt_status, MAX_BUFFER, "[exit:%d|%ldms] ", WEXITSTATUS(status), elapsed_time);
@@ -91,6 +96,7 @@ void update_prompt_status(int status, long elapsed_time, char *prompt_status) {
     }
 }
 
+// The main loop of the shell: read, parse, execute, and update prompt
 void run_shell() {
     char prompt_status[MAX_BUFFER] = DEFAULT_PROMPT;
     write(STDOUT_FILENO, WELCOME_MSG, strlen(WELCOME_MSG));
