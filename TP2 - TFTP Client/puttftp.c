@@ -6,42 +6,40 @@
 #include <netdb.h>
 #include <unistd.h>
 
-#define BUFFER_SIZE 516  // Maximum: 512 bytes of data + 4 bytes of header
-#define DATA_SIZE 512    // Maximum data size for each TFTP packet
+#define BUFFER_SIZE 4096  // Increased buffer size to handle larger blocks
+#define DEFAULT_BLOCKSIZE 512
 
-// Function to build the WRQ packet
-void build_wrq(char *buffer, const char *filename, const char *mode) {
-    uint16_t opcode = htons(2);  // WRQ has opcode 2
+void build_wrq_with_blocksize(char *buffer, const char *filename, const char *mode, int blocksize) {
+    uint16_t opcode = htons(2);  // WRQ opcode
     size_t len = 0;
 
-    // Add opcode
     memcpy(buffer + len, &opcode, sizeof(opcode));
     len += sizeof(opcode);
-
-    // Add the filename
     strcpy(buffer + len, filename);
     len += strlen(filename) + 1;
-
-    // Add the transfer mode
     strcpy(buffer + len, mode);
     len += strlen(mode) + 1;
 
-    write(STDOUT_FILENO, "WRQ packet built\n", 17);
+    // Add the Blocksize option
+    strcpy(buffer + len, "blksize");
+    len += strlen("blksize") + 1;
+    snprintf(buffer + len, 10, "%d", blocksize);
+    len += strlen(buffer + len) + 1;
+
+    write(STDOUT_FILENO, "WRQ with Blocksize option built\n", 32);
 }
 
-// Function to send the WRQ and file data
-void send_wrq(const char *server, const char *filename) {
+void send_wrq_with_blocksize_and_data(const char *server, const char *filename, int blocksize) {
     int sock;
     struct addrinfo hints, *res;
     char buffer[BUFFER_SIZE];
-    ssize_t sent, received;
     FILE *file;
+    ssize_t received, sent;
     uint16_t block = 0;
 
-    // Resolve the server address
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;       // IPv4
-    hints.ai_socktype = SOCK_DGRAM; // UDP protocol
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
     hints.ai_protocol = IPPROTO_UDP;
 
     if (getaddrinfo(server, "1069", &hints, &res) != 0) {
@@ -49,14 +47,13 @@ void send_wrq(const char *server, const char *filename) {
         exit(EXIT_FAILURE);
     }
 
-    // Create the UDP socket
-    if ((sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) == -1) {
+    sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock == -1) {
         write(STDOUT_FILENO, "Error creating socket\n", 23);
         freeaddrinfo(res);
         exit(EXIT_FAILURE);
     }
 
-    // Open the file for reading
     file = fopen(filename, "rb");
     if (!file) {
         write(STDOUT_FILENO, "Error opening file\n", 20);
@@ -65,9 +62,9 @@ void send_wrq(const char *server, const char *filename) {
         exit(EXIT_FAILURE);
     }
 
-    // Build and send the WRQ packet
-    build_wrq(buffer, filename, "octet");
-    sent = sendto(sock, buffer, strlen(filename) + strlen("octet") + 4, 0, res->ai_addr, res->ai_addrlen);
+    build_wrq_with_blocksize(buffer, filename, "octet", blocksize);
+
+    sent = sendto(sock, buffer, strlen(filename) + strlen("octet") + strlen("blksize") + 10 + 4, 0, res->ai_addr, res->ai_addrlen);
     if (sent == -1) {
         write(STDOUT_FILENO, "Error sending WRQ\n", 19);
         fclose(file);
@@ -78,12 +75,16 @@ void send_wrq(const char *server, const char *filename) {
 
     write(STDOUT_FILENO, "WRQ sent to server\n", 20);
 
-    // Send file data in DATA packets
+    // Print chosen blocksize
+    char blocksize_msg[64];
+    snprintf(blocksize_msg, sizeof(blocksize_msg), "Blocksize chosen for transfer: %d bytes\n", blocksize);
+    write(STDOUT_FILENO, blocksize_msg, strlen(blocksize_msg));
+
     struct sockaddr_in sender_addr;
     socklen_t sender_len = sizeof(sender_addr);
 
     while (1) {
-        // Wait for the ACK from the server
+        // Wait for ACK
         received = recvfrom(sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&sender_addr, &sender_len);
         if (received == -1) {
             write(STDOUT_FILENO, "Error receiving ACK\n", 21);
@@ -112,19 +113,18 @@ void send_wrq(const char *server, const char *filename) {
         }
 
         // Read next chunk of data from the file
-        size_t data_len = fread(buffer + 4, 1, DATA_SIZE, file);
+        size_t data_len = fread(buffer + 4, 1, blocksize, file);
         if (data_len == 0) {
             write(STDOUT_FILENO, "File transfer complete\n", 24);
             break;
         }
 
-        // Build the DATA packet
+        // Build DATA packet
         uint16_t data_opcode = htons(3);
         uint16_t data_block = htons(block);
         memcpy(buffer, &data_opcode, sizeof(uint16_t));
         memcpy(buffer + 2, &data_block, sizeof(uint16_t));
 
-        // Send the DATA packet
         sent = sendto(sock, buffer, data_len + 4, 0, (struct sockaddr *)&sender_addr, sender_len);
         if (sent == -1) {
             write(STDOUT_FILENO, "Error sending DATA packet\n", 26);
@@ -132,23 +132,27 @@ void send_wrq(const char *server, const char *filename) {
         }
     }
 
-    // Clean up
     fclose(file);
     close(sock);
     freeaddrinfo(res);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        write(STDOUT_FILENO, "Usage: puttftp <server> <file>\n", 31);
+    if (argc != 4) {
+        write(STDOUT_FILENO, "Usage: puttftp <server> <file> <blocksize>\n", 43);
         exit(EXIT_FAILURE);
     }
 
     const char *server = argv[1];
     const char *file = argv[2];
+    int blocksize = atoi(argv[3]);
 
-    write(STDOUT_FILENO, "Sending WRQ...\n", 16);
-    send_wrq(server, file);
+    if (blocksize < 8 || blocksize > 65464) {
+        write(STDOUT_FILENO, "Error: Blocksize must be between 8 and 65464\n", 46);
+        exit(EXIT_FAILURE);
+    }
+
+    send_wrq_with_blocksize_and_data(server, file, blocksize);
 
     return 0;
 }

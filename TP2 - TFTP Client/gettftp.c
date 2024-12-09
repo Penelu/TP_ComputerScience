@@ -6,10 +6,11 @@
 #include <netdb.h>
 #include <unistd.h>
 
-#define BUFFER_SIZE 516  // Maximum: 512 bytes of data + 4 bytes of header
-#define DATA_SIZE 512    // Maximum data size in TFTP
+#define BUFFER_SIZE 4096  // Increased buffer size to handle larger blocks
+#define DEFAULT_BLOCKSIZE 512
+#define DATA_OFFSET 4
 
-void build_rrq(char *buffer, const char *filename, const char *mode) {
+void build_rrq_with_blocksize(char *buffer, const char *filename, const char *mode, int blocksize) {
     uint16_t opcode = htons(1);  // RRQ opcode
     size_t len = 0;
 
@@ -20,10 +21,16 @@ void build_rrq(char *buffer, const char *filename, const char *mode) {
     strcpy(buffer + len, mode);
     len += strlen(mode) + 1;
 
-    write(STDOUT_FILENO, "RRQ packet built\n", 17);
+    // Add the Blocksize option
+    strcpy(buffer + len, "blksize");
+    len += strlen("blksize") + 1;
+    snprintf(buffer + len, 10, "%d", blocksize);
+    len += strlen(buffer + len) + 1;
+
+    write(STDOUT_FILENO, "RRQ with Blocksize option built\n", 32);
 }
 
-void send_rrq_and_receive(const char *server, const char *filename) {
+void send_rrq_with_blocksize_and_receive(const char *server, const char *filename, int blocksize) {
     int sock;
     struct addrinfo hints, *res;
     char buffer[BUFFER_SIZE];
@@ -48,9 +55,9 @@ void send_rrq_and_receive(const char *server, const char *filename) {
         exit(EXIT_FAILURE);
     }
 
-    build_rrq(buffer, filename, "octet");
+    build_rrq_with_blocksize(buffer, filename, "octet", blocksize);
 
-    sent = sendto(sock, buffer, strlen(filename) + strlen("octet") + 4, 0, res->ai_addr, res->ai_addrlen);
+    sent = sendto(sock, buffer, strlen(filename) + strlen("octet") + strlen("blksize") + 10 + 4, 0, res->ai_addr, res->ai_addrlen);
     if (sent == -1) {
         write(STDOUT_FILENO, "Error sending RRQ\n", 19);
         close(sock);
@@ -59,6 +66,11 @@ void send_rrq_and_receive(const char *server, const char *filename) {
     }
 
     write(STDOUT_FILENO, "RRQ sent to server\n", 20);
+
+    // Print chosen blocksize
+    char blocksize_msg[64];
+    snprintf(blocksize_msg, sizeof(blocksize_msg), "Blocksize chosen for transfer: %d bytes\n", blocksize);
+    write(STDOUT_FILENO, blocksize_msg, strlen(blocksize_msg));
 
     file = fopen(filename, "wb");
     if (!file) {
@@ -89,12 +101,11 @@ void send_rrq_and_receive(const char *server, const char *filename) {
             if (block_num == block + 1) {
                 block++;
                 char msg[128];
-                snprintf(msg, sizeof(msg), "Received DATA block %d, size %ld bytes\n", block, received - 4);
+                snprintf(msg, sizeof(msg), "Received DATA block %d, size %ld bytes\n", block, received - DATA_OFFSET);
                 write(STDOUT_FILENO, msg, strlen(msg));
 
-                fwrite(buffer + 4, 1, received - 4, file);
+                fwrite(buffer + DATA_OFFSET, 1, received - DATA_OFFSET, file);
 
-                // Send ACK
                 uint16_t ack_opcode = htons(4);
                 uint16_t ack_block = htons(block);
                 memcpy(buffer, &ack_opcode, sizeof(uint16_t));
@@ -113,8 +124,7 @@ void send_rrq_and_receive(const char *server, const char *filename) {
             break;
         }
 
-        // Stop if this is the last DATA packet (less than DATA_SIZE bytes)
-        if (received < BUFFER_SIZE) {
+        if (received - DATA_OFFSET < blocksize) {
             write(STDOUT_FILENO, "File transfer complete\n", 24);
             break;
         }
@@ -126,15 +136,21 @@ void send_rrq_and_receive(const char *server, const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        write(STDOUT_FILENO, "Usage: gettftp <server> <file>\n", 31);
+    if (argc != 4) {
+        write(STDOUT_FILENO, "Usage: gettftp <server> <file> <blocksize>\n", 43);
         exit(EXIT_FAILURE);
     }
 
     const char *server = argv[1];
     const char *file = argv[2];
+    int blocksize = atoi(argv[3]);
 
-    send_rrq_and_receive(server, file);
+    if (blocksize < 8 || blocksize > 65464) {
+        write(STDOUT_FILENO, "Error: Blocksize must be between 8 and 65464\n", 46);
+        exit(EXIT_FAILURE);
+    }
+
+    send_rrq_with_blocksize_and_receive(server, file, blocksize);
 
     return 0;
 }
