@@ -7,13 +7,12 @@
 #include <netdb.h>
 #include <unistd.h>
 
-#define MAX_BLOCKSIZE 65464  // Maximum blocksize allowed by TFTP
-#define BUFFER_SIZE (MAX_BLOCKSIZE + 4)  // Buffer size to accommodate data and header
+#define BUFFER_SIZE 4096  // Buffer to handle larger blocks
 #define DATA_OFFSET 4
 #define BLOCKSIZE_TESTS 5  // Number of block sizes to test
 
-// Function to measure transfer time for a specific blocksize and save the file
-double measure_transfer_time_and_save(const char *server, const char *filename, int blocksize) {
+// Function to measure transfer time for a specific blocksize
+double measure_transfer_time(const char *server, const char *filename, int blocksize) {
     int sock;
     struct addrinfo hints, *res;
     char buffer[BUFFER_SIZE];
@@ -60,9 +59,9 @@ double measure_transfer_time_and_save(const char *server, const char *filename, 
         exit(EXIT_FAILURE);
     }
 
-    file = fopen(filename, "wb");
+    file = fopen("/dev/null", "wb");  // Discard data
     if (!file) {
-        write(STDOUT_FILENO, "Error creating local file\n", 26);
+        write(STDOUT_FILENO, "Error opening /dev/null\n", 24);
         close(sock);
         freeaddrinfo(res);
         exit(EXIT_FAILURE);
@@ -109,7 +108,7 @@ double measure_transfer_time_and_save(const char *server, const char *filename, 
         }
 
         if (received - DATA_OFFSET < blocksize) {
-            break;  // Last packet received
+            break;
         }
     }
 
@@ -138,11 +137,8 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < BLOCKSIZE_TESTS; i++) {
         int blocksize = blocksize_tests[i];
+        double elapsed_time = measure_transfer_time(server, file, blocksize);
         char msg[128];
-        snprintf(msg, sizeof(msg), "Testing blocksize: %d bytes\n", blocksize);
-        write(STDOUT_FILENO, msg, strlen(msg));
-
-        double elapsed_time = measure_transfer_time_and_save(server, file, blocksize);
         snprintf(msg, sizeof(msg), "Blocksize %d: %.2f seconds\n", blocksize, elapsed_time);
         write(STDOUT_FILENO, msg, strlen(msg));
 
