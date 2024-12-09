@@ -6,37 +6,136 @@
 #include <netdb.h>
 #include <unistd.h>
 
-// Function to resolve the server address and reserve a connection socket
-int create_socket(const char *server) {
-    struct addrinfo hints, *res;
-    int sock;
+#define BUFFER_SIZE 516  // Maximum: 512 bytes of data + 4 bytes of header
+#define DATA_SIZE 512    // Maximum data size for each TFTP packet
 
-    // Configure hints for getaddrinfo
+// Function to build the WRQ packet
+void build_wrq(char *buffer, const char *filename, const char *mode) {
+    uint16_t opcode = htons(2);  // WRQ has opcode 2
+    size_t len = 0;
+
+    // Add opcode
+    memcpy(buffer + len, &opcode, sizeof(opcode));
+    len += sizeof(opcode);
+
+    // Add the filename
+    strcpy(buffer + len, filename);
+    len += strlen(filename) + 1;
+
+    // Add the transfer mode
+    strcpy(buffer + len, mode);
+    len += strlen(mode) + 1;
+
+    write(STDOUT_FILENO, "WRQ packet built\n", 17);
+}
+
+// Function to send the WRQ and file data
+void send_wrq(const char *server, const char *filename) {
+    int sock;
+    struct addrinfo hints, *res;
+    char buffer[BUFFER_SIZE];
+    ssize_t sent, received;
+    FILE *file;
+    uint16_t block = 0;
+
+    // Resolve the server address
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;       // IPv4
     hints.ai_socktype = SOCK_DGRAM; // UDP protocol
     hints.ai_protocol = IPPROTO_UDP;
 
-    // Get address information
-    if (getaddrinfo(server, "69", &hints, &res) != 0) {
+    if (getaddrinfo(server, "1069", &hints, &res) != 0) {
         write(STDOUT_FILENO, "Error resolving server address\n", 31);
         exit(EXIT_FAILURE);
     }
 
     // Create the UDP socket
-    sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock == -1) {
+    if ((sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) == -1) {
         write(STDOUT_FILENO, "Error creating socket\n", 23);
         freeaddrinfo(res);
         exit(EXIT_FAILURE);
     }
 
-    write(STDOUT_FILENO, "Socket created successfully\n", 28);
+    // Open the file for reading
+    file = fopen(filename, "rb");
+    if (!file) {
+        write(STDOUT_FILENO, "Error opening file\n", 20);
+        close(sock);
+        freeaddrinfo(res);
+        exit(EXIT_FAILURE);
+    }
 
-    // Free the addrinfo structure
+    // Build and send the WRQ packet
+    build_wrq(buffer, filename, "octet");
+    sent = sendto(sock, buffer, strlen(filename) + strlen("octet") + 4, 0, res->ai_addr, res->ai_addrlen);
+    if (sent == -1) {
+        write(STDOUT_FILENO, "Error sending WRQ\n", 19);
+        fclose(file);
+        close(sock);
+        freeaddrinfo(res);
+        exit(EXIT_FAILURE);
+    }
+
+    write(STDOUT_FILENO, "WRQ sent to server\n", 20);
+
+    // Send file data in DATA packets
+    struct sockaddr_in sender_addr;
+    socklen_t sender_len = sizeof(sender_addr);
+
+    while (1) {
+        // Wait for the ACK from the server
+        received = recvfrom(sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&sender_addr, &sender_len);
+        if (received == -1) {
+            write(STDOUT_FILENO, "Error receiving ACK\n", 21);
+            break;
+        }
+
+        uint16_t opcode, ack_block;
+        memcpy(&opcode, buffer, sizeof(uint16_t));
+        opcode = ntohs(opcode);
+
+        if (opcode == 4) {  // ACK packet
+            memcpy(&ack_block, buffer + 2, sizeof(uint16_t));
+            ack_block = ntohs(ack_block);
+
+            if (ack_block == block) {
+                block++;
+                char msg[128];
+                snprintf(msg, sizeof(msg), "ACK received for block %d\n", ack_block);
+                write(STDOUT_FILENO, msg, strlen(msg));
+            }
+        } else if (opcode == 5) {  // ERROR packet
+            write(STDOUT_FILENO, "Error received from server: ", 28);
+            write(STDOUT_FILENO, buffer + 4, strlen(buffer + 4));
+            write(STDOUT_FILENO, "\n", 1);
+            break;
+        }
+
+        // Read next chunk of data from the file
+        size_t data_len = fread(buffer + 4, 1, DATA_SIZE, file);
+        if (data_len == 0) {
+            write(STDOUT_FILENO, "File transfer complete\n", 24);
+            break;
+        }
+
+        // Build the DATA packet
+        uint16_t data_opcode = htons(3);
+        uint16_t data_block = htons(block);
+        memcpy(buffer, &data_opcode, sizeof(uint16_t));
+        memcpy(buffer + 2, &data_block, sizeof(uint16_t));
+
+        // Send the DATA packet
+        sent = sendto(sock, buffer, data_len + 4, 0, (struct sockaddr *)&sender_addr, sender_len);
+        if (sent == -1) {
+            write(STDOUT_FILENO, "Error sending DATA packet\n", 26);
+            break;
+        }
+    }
+
+    // Clean up
+    fclose(file);
+    close(sock);
     freeaddrinfo(res);
-
-    return sock;
 }
 
 int main(int argc, char *argv[]) {
@@ -48,17 +147,8 @@ int main(int argc, char *argv[]) {
     const char *server = argv[1];
     const char *file = argv[2];
 
-    write(STDOUT_FILENO, "Resolving server and reserving connection...\n", 45);
-    int sock = create_socket(server);
-
-    write(STDOUT_FILENO, "Server resolved successfully\n", 29);
-    write(STDOUT_FILENO, "File to be uploaded: ", 21);
-    write(STDOUT_FILENO, file, strlen(file));
-    write(STDOUT_FILENO, "\n", 1);
-
-    // Close the socket after use
-    close(sock);
-    write(STDOUT_FILENO, "Socket closed\n", 14);
+    write(STDOUT_FILENO, "Sending WRQ...\n", 16);
+    send_wrq(server, file);
 
     return 0;
 }
